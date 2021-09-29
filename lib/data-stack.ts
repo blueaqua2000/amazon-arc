@@ -1,7 +1,7 @@
 import {Stack, StackProps, Construct, Duration, RemovalPolicy} from "@aws-cdk/core";
 import {DatabaseCluster, DatabaseClusterEngine, AuroraMysqlEngineVersion, DatabaseProxy, ProxyTarget, Credentials} from "@aws-cdk/aws-rds";
 import {ScalableTarget, ServiceNamespace, PredefinedMetric} from "@aws-cdk/aws-applicationautoscaling";
-import {SubnetType, Port, Peer, GatewayVpcEndpointAwsService} from "@aws-cdk/aws-ec2";
+import {SubnetType, Peer, Port, GatewayVpcEndpointAwsService} from "@aws-cdk/aws-ec2";
 import {Bucket, BucketEncryption, BlockPublicAccess, StorageClass} from "@aws-cdk/aws-s3";
 import VPCStack from "./vpc-stack";
 
@@ -49,8 +49,8 @@ export default class DataStack extends Stack {
     // enable auto scaling for database
     let dbScaling = new ScalableTarget(this, "dbScaling", {
       serviceNamespace: ServiceNamespace.RDS,
-      minCapacity: 2,
-      maxCapacity: 4,
+      minCapacity: 3,
+      maxCapacity: 15,
       resourceId: `cluster:${db.clusterIdentifier}`,
       scalableDimension: "rds:cluster:ReadReplicaCount",
     });
@@ -58,23 +58,24 @@ export default class DataStack extends Stack {
       predefinedMetric: PredefinedMetric.RDS_READER_AVERAGE_CPU_UTILIZATION,
       targetValue: 60,
     });
-    // create rds proxy
+    // allow connections to the database proxy from services (private subnet)
+    let dbProxySecurityGroup = vpcStack.createSecurityGroup("dbProxySecurityGroup", {
+      allowAllOutbound: false,
+    });
+    dbProxySecurityGroup.connections.allowFrom(Peer.ipv4("10.0.0.0/24"), Port.tcp(3306), "Allow connections to the database proxy from services (private subnet)");
+    // create the database proxy
     let dbProxy = this.dbProxy = new DatabaseProxy(this, "dbProxy", {
       proxyTarget: ProxyTarget.fromCluster(db),
+      requireTLS: true,
       secrets: [db.secret!],
       vpc,
       vpcSubnets: {
         subnetType: SubnetType.ISOLATED,
       },
+      securityGroups: [dbProxySecurityGroup],
     });
-    dbProxy.connections.allowFrom(Peer.ipv4("10.0.0.0/16"), Port.tcp(3306), "give access from services");
-
-    // let dbSecurityGroup = vpcStack.createSecurityGroup("dbSecurityGroup", {
-    //   allowAllOutbound: false,
-    // });
-    // dbSecurityGroup.connections.allowFrom(dbProxy, Port.tcp(3306), "Allow DB proxy access");
-    // const role = new Role(this, "DBProxyRole", { assumedBy: new AccountPrincipal(this.account) });
-    // dbProxy.grantConnect(role, DB_APP_USERNAME); // Grant the role connection access to the DB Proxy for database user.
+    // allow connections to the database cluster from the proxy
+    db.connections.allowFrom(dbProxy, Port.tcp(3306), "Allow connections to the database cluster from the proxy");
     return db;
   }
 
@@ -102,9 +103,9 @@ export default class DataStack extends Stack {
     });
     vpc.addGatewayEndpoint("storeGateway", {
       service: GatewayVpcEndpointAwsService.S3,
-      // subnets: [{
-      //   subnetType: SubnetType.ISOLATED,
-      // }],
+      subnets: [{
+        subnetType: SubnetType.ISOLATED,
+      }],
     });
     return bucket;
   }

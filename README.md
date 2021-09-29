@@ -60,7 +60,9 @@
 
   The business service is developed using Golang, and deployed as AWS Lambda functions.
 
-  AWS Lambda performs the necessary execution and administration of computing resources. It scales automatically, and there is no charge when the code is not running. Additionally, Lambda uses a safety throttle for the number of concurrent executions. Thus, the cost of infrastructure can be controlled within a reasonable range.
+  AWS Lambda performs the necessary execution and administration of computing resources. It scales automatically according to the load. To reduce the impact of cold start, use scheduled scaling to increase the overall throughput. This combination helps to improve the end-user experience even under heavy load.
+
+  There is no charge when the code is not running. Additionally, Lambda uses a safety throttle for the number of concurrent executions. Thus, the cost of infrastructure can be controlled within a reasonable range.
 
   Used AWS Service:
 

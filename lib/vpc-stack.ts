@@ -19,23 +19,26 @@ export default class VPCStack extends Stack {
   createVPC(): Vpc {
     return this.vpc = new Vpc(this, "appVPC", {
       cidr: "10.0.0.0/16",
-      maxAzs: 4,
+      // cross all of the available zones for high availability
+      maxAzs: 99,
       subnetConfiguration: [{
         name: ISOLATED_SUBNET_NAME,
         subnetType: SubnetType.ISOLATED,
+        cidrMask: 28,
       }, {
         name: PRIVATE_SUBNET_NAME,
         subnetType: SubnetType.PRIVATE,
+        cidrMask: 24,
       }, {
         name: PUBLIC_SUBNET_NAME,
         subnetType: SubnetType.PUBLIC,
+        cidrMask: 26,
       }],
-      // natGateways: 0
     });
   }
 
   /**
-   * create a security group within current vpc
+   * create a security group within the current VPC
    * @param {string} id - the security group id
    * @param {SecurityGroupProps} [props] - the security group properties
    * @returns {SecurityGroup} the security group created
@@ -60,8 +63,8 @@ interface VPCStackProps extends StackProps {
 }
 // the security group properties
 interface SecurityGroupProps {
+  securityGroupName?: string;
   allowAllOutbound?: boolean;
-  description?: string;
   disableInlineRules?: boolean;
-  securityGroupName?: string
+  description?: string;
 }

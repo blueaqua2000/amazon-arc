@@ -1,9 +1,9 @@
 import {Stack, StackProps, Construct, Duration} from "@aws-cdk/core";
-import {RestApi, Cors, LambdaIntegration} from "@aws-cdk/aws-apigateway";
+import {RestApi, EndpointType, LambdaIntegration} from "@aws-cdk/aws-apigateway";
 import {Function as LambdaFunction, Runtime, Code} from "@aws-cdk/aws-lambda";
-import {SubnetType} from "@aws-cdk/aws-ec2";
+import {SecurityGroup, SubnetType, Peer, Port, InterfaceVpcEndpoint} from "@aws-cdk/aws-ec2";
 import {ScalableTarget, ServiceNamespace, PredefinedMetric} from "@aws-cdk/aws-applicationautoscaling";
-import {PolicyStatement, Effect} from "@aws-cdk/aws-iam";
+import {PolicyStatement, Effect, AnyPrincipal} from "@aws-cdk/aws-iam";
 import VPCStack from "./vpc-stack";
 import DataStack from "./data-stack";
 
@@ -13,10 +13,13 @@ import DataStack from "./data-stack";
 export default class ServiceStack extends Stack {
   api: RestApi;
   service: LambdaFunction;
+  serviceSecurityGroup: SecurityGroup;
 
   constructor(scope: Construct, id: string, props: ServiceStackProps) {
     super(scope, id, props);
     let {vpcStack, dataStack} = props;
+    let serviceSecurityGroup = this.serviceSecurityGroup = vpcStack.createSecurityGroup("serviceSecurityGroup");
+    serviceSecurityGroup.addIngressRule(Peer.anyIpv4(), Port.tcp(443));
     this.createAPIGateway(vpcStack);
     this.createService(vpcStack, dataStack, "api");
   }
@@ -26,19 +29,30 @@ export default class ServiceStack extends Stack {
    * @param {VPCStack} vpcStack - the VPC stack
    */
   createAPIGateway(vpcStack: VPCStack): void {
+    let {vpc} = vpcStack;
+    // let {serviceSecurityGroup} = this;
+    // let vpcEndpoint = new InterfaceVpcEndpoint(this, 'ApiVpcEndpoint', {
+    //   vpc,
+    //   service: {
+    //     name: `com.amazonaws.${Stack.of(this).region}.execute-api`,
+    //     port: 443,
+    //   },
+    //   subnets: {
+    //     subnetType: SubnetType.PRIVATE,
+    //   },
+    //   securityGroups: [serviceSecurityGroup],
+    //   privateDnsEnabled: true,
+    // });
     this.api = new RestApi(this, "api", {
       deployOptions: {
-        // stageName: "beta",
         metricsEnabled: true,
         // loggingLevel: MethodLoggingLevel.INFO,
         dataTraceEnabled: true,
       },
-      // enable CORS
-      defaultCorsPreflightOptions: {
-        allowOrigins: Cors.ALL_ORIGINS,
-        allowMethods: Cors.ALL_METHODS,
-        allowCredentials: true,
-      },
+      // endpointConfiguration: {
+      //   types: [EndpointType.PRIVATE],
+      //   vpcEndpoints: [vpcEndpoint],
+      // },
     });
   }
 
@@ -51,9 +65,15 @@ export default class ServiceStack extends Stack {
    * @returns {LambdaFunction} the Lambda service
    */
   createService(vpcStack: VPCStack, dataStack: DataStack, path: string, apiMethod: string = "GET"): LambdaFunction {
-    let {api} = this;
+    let {api, serviceSecurityGroup} = this;
     let {vpc} = vpcStack;
     let {internalStore, dbProxy} = dataStack;
+    // let invokePolicy = new PolicyStatement({
+    //   principals: [new AnyPrincipal()],
+    //   effect: Effect.ALLOW,
+    //   actions: ["execute-api:Invoke"],
+    //   resources: ["execute-api:/*"],
+    // });
     let storeAccessPolicy = new PolicyStatement({
       effect: Effect.ALLOW,
       actions: ["s3:*"],
@@ -72,7 +92,7 @@ export default class ServiceStack extends Stack {
       vpcSubnets: {
         subnetType: SubnetType.PRIVATE,
       },
-      // securityGroup:
+      securityGroups: [serviceSecurityGroup],
       initialPolicy: [storeAccessPolicy],
     });
     let apiRes = api.root.addResource(path);
@@ -89,8 +109,8 @@ export default class ServiceStack extends Stack {
       predefinedMetric: PredefinedMetric.LAMBDA_PROVISIONED_CONCURRENCY_UTILIZATION,
       targetValue: 0.9,
     });
-    // grant connection access to the proxy
-    dbProxy.grantConnect(service, "dbAdmin");
+    // grant connection access to the database proxy
+    dbProxy.grantConnect(service);
     return service;
   }
 }
